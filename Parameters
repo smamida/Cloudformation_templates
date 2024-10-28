@@ -1,0 +1,22 @@
+{
+    "Parameters": {
+        "EnvironmentName": "Ubi-x-cloudformation",
+        "VpcCidr": "10.0.0.0/16",
+        "PublicSubnet1CIDRBlock": "10.0.1.0/24",
+        "PublicSubnet2CIDRBlock": "10.0.2.0/24",
+        "PrivateSubnet1CIDRBlock": "10.0.3.0/24",
+        "PrivateSubnet2CIDRBlock": "10.0.4.0/24",
+        "InstanceType": "t2.micro",
+        "RdsInstanceClassType": "db.t3.micro",
+        "RDSDBInstanceEngine": "postgres",
+        "ParameterGroupFamily": "postgres13",
+        "RDSDBName": "ubix",
+        "MasterUsername": "usernamemaster",
+        "MasterUserPassword": "password1234",
+        "CidrIpAddress": "0.0.0.0/0",
+        "RDSBackupRetentionPeriod": "7" ,
+        "RDSSecretManagerDBCredentials": "RDS_Secret_cloudformation",
+        "DbAllocatedStorage": "50" ,
+        "Ami": "ami-08718895af4dfa033"
+    }
+}
