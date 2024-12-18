@@ -1,0 +1,168 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: AWS CloudFormation Template to create an EC2 instance with SSM document
+Parameters:
+  CreateNewVPC:
+    Type: String
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "false"
+    Description: Set to true to create a new VPC, false to use existing ones.
+
+  VPCId:
+    Type: String
+    Default: ""
+    Description: ID of the existing VPC to use if not creating a new one.
+
+  PublicSubnetIds:
+    Type: String
+    Default: ""
+    Description: Comma-separated list of public subnet IDs to use if using an existing VPC.
+
+  PrivateSubnetIds:
+    Type: String
+    Default: ""
+    Description: Comma-separated list of private subnet IDs to use if using an existing VPC.
+
+Conditions:
+  ShouldCreateNewVPC:
+    Fn::Equals:
+      - !Ref CreateNewVPC  # Ensure this resolves strictly to a string
+      - "true"
+Resources:
+  # IAM Role for EC2 Instances
+
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Condition: ShouldCreateNewVPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: NewVPC
+
+  # Create public subnet only if new VPC is created
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Condition: ShouldCreateNewVPC
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PublicSubnet
+
+  # Create private subnet only if new VPC is created
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Condition: ShouldCreateNewVPC
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet
+
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  EC2CustomPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: EC2CustomPolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:*
+              - logs:*
+              - airflow:ListEnvironments
+              - airflow:GetEnvironment
+              - airflow:*
+            Resource: "*"
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # SSM Document
+  WriteLBToFileSSMDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      Name: WriteLBToFile
+      DocumentType: Command
+      Content:
+        schemaVersion: "1.2"
+        description: "Install Docker and configure."
+        runtimeConfig:
+          aws:runShellScript:
+            properties:
+              - id: "0.aws:runShellScript"
+                runCommand:
+                  - sudo apt-get update
+                  - sudo apt-get install -y docker.io
+                  - sudo systemctl start docker
+                  - sudo systemctl enable docker
+
+  AirflowEC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
+
+
+  # Security Group
+  MySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref MyVPC
+      GroupDescription: Allow SSH and HTTP access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 203.0.113.0/24 # Replace with your IP range
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  # EC2 Instance
+  MyEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-09b0a86a2c84101e1
+      IamInstanceProfile: !Ref AirflowEC2InstanceProfile
+      SubnetId: !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !GetAtt MySecurityGroup.GroupId
+
+Outputs:
+  InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref MyEC2Instance
+
+Outputs:
+  VPCId:
+    Description: ID of the VPC in use
+    Value: 
+      !If 
+        - ShouldCreateNewVPC
+        - !Ref MyVPC
+        - !Ref VPCId
