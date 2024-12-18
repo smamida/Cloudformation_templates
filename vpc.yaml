@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Conditional creation of a new VPC or use existing VPC settings.
+
+Parameters:
+  CreateNewVPC:
+    Type: String
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "false"
+    Description: Set to true to create a new VPC, false to use existing ones.
+
+  VPCId:
+    Type: String
+    Default: ""
+    Description: ID of the existing VPC to use if not creating a new one.
+
+  PublicSubnetIds:
+    Type: String
+    Default: ""
+    Description: Comma-separated list of public subnet IDs to use if using an existing VPC.
+
+  PrivateSubnetIds:
+    Type: String
+    Default: ""
+    Description: Comma-separated list of private subnet IDs to use if using an existing VPC.
+
+Conditions:
+  ShouldCreateNewVPC:
+    Fn::Equals:
+      - !Ref CreateNewVPC  # Ensure this resolves strictly to a string
+      - "true"
+
+Resources:
+  # Create VPC only if ShouldCreateNewVPC is true
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Condition: ShouldCreateNewVPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: NewVPC
+
+  # Create public subnet only if new VPC is created
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Condition: ShouldCreateNewVPC
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PublicSubnet
+
+  # Create private subnet only if new VPC is created
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Condition: ShouldCreateNewVPC
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet
+
+Outputs:
+  VPCId:
+    Description: ID of the VPC in use
+    Value: 
+      !If 
+        - ShouldCreateNewVPC
+        - !Ref MyVPC
+        - !Ref VPCId

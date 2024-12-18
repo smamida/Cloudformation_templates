@@ -1,0 +1,418 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: AWS CloudFormation Template to create an EC2 instance with SSM document
+
+Parameters:
+  CreateNewVPC:
+    Type: String
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "false"
+    Description: Set to true to create a new VPC, false to use existing ones.
+  VPCId:
+    Type: String
+    Default: ""
+    Description: ID of the existing VPC to use if not creating a new one.
+  PublicSubnetIds:
+    Type: String
+    Default: ""
+    Description: Comma-separated list of public subnet IDs to use if using an existing VPC.
+  PrivateSubnetIds:
+    Type: String
+    Default: ""
+    Description: Comma-separated list of private subnet IDs to use if using an existing VPC.
+
+Conditions:
+  ShouldCreateNewVPC:
+    Fn::Equals:
+      - !Ref CreateNewVPC
+      - "true"
+
+Resources:
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Condition: ShouldCreateNewVPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: NewVPC
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Condition: ShouldCreateNewVPC
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""] 
+      Tags:
+        - Key: Name
+          Value: PublicSubnet
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Condition: ShouldCreateNewVPC
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Condition: ShouldCreateNewVPC
+
+  AttachInternetGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Condition: ShouldCreateNewVPC
+    Properties:
+      VpcId: !Ref MyVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  RouteTable:
+    Condition: ShouldCreateNewVPC
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Fn::If:
+          - ShouldCreateNewVPC
+          - !Ref MyVPC
+          - !Ref VPCId
+
+  PublicRoute:
+    Condition: ShouldCreateNewVPC
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Fn::If:
+          - ShouldCreateNewVPC
+          - !Ref InternetGateway
+          - !Ref "AWS::NoValue"
+
+  SubnetRouteTableAssociation:
+    Condition: ShouldCreateNewVPC
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Fn::If:
+          - ShouldCreateNewVPC
+          - !Ref PublicSubnet
+          - !Select [0, !Split [",", !Ref PublicSubnetIds]]
+      RouteTableId: !Ref RouteTable
+
+  MySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Fn::If:
+          - ShouldCreateNewVPC
+          - !Ref MyVPC
+          - !Ref VPCId
+      GroupDescription: Allow SSH and HTTP access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  AirflowEC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
+  WriteLBToFileSSMDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      Name: WriteLBToFile
+      DocumentType: Command
+      Content:
+        schemaVersion: "1.2"
+        description: Install Nginx and display a message.
+        runtimeConfig:
+          aws:runShellScript:
+            properties:
+              - id: 0.aws:runShellScript
+                runCommand:
+                  - sudo apt-get update -y
+                  - sudo apt install -y nginx
+                  - sudo systemctl start nginx
+                  - sudo systemctl enable nginx
+                  - echo "Hello from $(hostname -f)" > /var/www/html/index.html
+
+  MyEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      KeyName: ubi-x
+      ImageId: ami-09b0a86a2c84101e1
+      IamInstanceProfile: !Ref AirflowEC2InstanceProfile
+      SubnetId:
+        Fn::If:
+          - ShouldCreateNewVPC
+          - !Ref PublicSubnet
+          - !Select [0, !Split [",", !Ref PublicSubnetIds]]
+      SecurityGroupIds:
+        - !Ref MySecurityGroup
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          apt update -y
+          apt install -y docker.io
+          systemctl start docker
+          systemctl enable docker
+          apt install -y nginx
+          systemctl start nginx
+          systemctl enable nginx
+          echo "server { listen 80; location / { proxy_pass http://localhost:8080; } }" > /etc/nginx/conf.d/default.conf
+          systemctl restart nginx
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# AWSTemplateFormatVersion: 2010-09-09
+# Description: AWS CloudFormation Template to create an EC2 instance with SSM document
+# Parameters:
+#   CreateNewVPC:
+#     Type: String
+#     AllowedValues:
+#       - "true"
+#       - "false"
+#     Default: "false"
+#     Description: Set to true to create a new VPC, false to use existing ones.
+#   VPCId:
+#     Type: String
+#     Default: ""
+#     Description: ID of the existing VPC to use if not creating a new one.
+#   PublicSubnetIds:
+#     Type: String
+#     Default: ""
+#     Description: Comma-separated list of public subnet IDs to use if using an existing VPC.
+#   PrivateSubnetIds:
+#     Type: String
+#     Default: ""
+#     Description: Comma-separated list of private subnet IDs to use if using an existing VPC.
+# Conditions:
+#   ShouldCreateNewVPC:
+#     Fn::Equals:
+#       - CreateNewVPC
+#       - "true"
+# Resources:
+#   MyVPC:
+#     Type: AWS::EC2::VPC
+#     Condition: ShouldCreateNewVPC
+#     Properties:
+#       CidrBlock: 10.0.0.0/16
+#       Tags:
+#         - Key: Name
+#           Value: NewVPC
+          
+#   PublicSubnet:
+#     Type: AWS::EC2::Subnet
+#     Condition: ShouldCreateNewVPC
+#     Properties:
+#       VpcId: MyVPC
+#       CidrBlock: 10.0.1.0/24
+#       AvailabilityZone:
+#         - 0
+#         - !GetAZs ""
+#       Tags:
+#         - Key: Name
+#           Value: PublicSubnet
+#   PrivateSubnet:
+#     Type: AWS::EC2::Subnet
+#     Condition: ShouldCreateNewVPC
+#     Properties:
+#       VpcId: MyVPC
+#       CidrBlock: 10.0.2.0/24
+#       AvailabilityZone:
+#         - 1
+#         - !GetAZs ""
+#       Tags:
+#         - Key: Name
+#           Value: PrivateSubnet
+#   InternetGateway:
+#     Type: AWS::EC2::InternetGateway
+
+#   AttachInternetGateway:
+#     Type: AWS::EC2::VPCGatewayAttachment
+#     Properties:
+#       VpcId: MyVPC
+#       InternetGatewayId: InternetGateway
+
+#   RouteTable:
+#     Type: AWS::EC2::RouteTable
+#     Properties:
+#       VpcId: 
+#         Fn::If:
+#           - ShouldCreateNewVPC
+#           - !Ref MyVPC
+#           - !Ref VPCId
+
+#   PublicRoute:
+#     Type: AWS::EC2::Route
+#     DependsOn: AttachInternetGateway
+#     Properties:
+#       RouteTableId: !Ref RouteTable
+#       DestinationCidrBlock: 0.0.0.0/0
+#       GatewayId: !Ref InternetGateway
+
+#   SubnetRouteTableAssociation:
+#     Type: AWS::EC2::SubnetRouteTableAssociation
+#     Properties:
+#       SubnetId: PublicSubnet
+#       RouteTableId: RouteTable
+#   MySecurityGroup:
+#     Type: AWS::EC2::SecurityGroup
+#     #Condition: ShouldCreateNewVPC
+#     Properties:
+#       VpcId: 
+#         Fn::If:
+#           - ShouldCreateNewVPC 
+#           - !Ref MyVPC
+#           - !Ref VPCId
+#       GroupDescription: Allow SSH and HTTP access
+#       SecurityGroupIngress:
+#         - IpProtocol: tcp
+#           FromPort: 22
+#           ToPort: 22
+#           CidrIp: 0.0.0.0/0
+#         - IpProtocol: tcp
+#           FromPort: 80
+#           ToPort: 80
+#           CidrIp: 0.0.0.0/0
+#       SecurityGroupEgress:
+#         - IpProtocol: -1
+#           FromPort: -1
+#           ToPort: -1
+#           CidrIp: 0.0.0.0/0
+#   EC2InstanceRole:
+#     Type: AWS::IAM::Role
+#     Properties:
+#       AssumeRolePolicyDocument:
+#         Version: 2012-10-17
+#         Statement:
+#           - Effect: Allow
+#             Principal:
+#               Service:
+#                 - ec2.amazonaws.com
+#             Action:
+#               - sts:AssumeRole
+#       ManagedPolicyArns:
+#         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+#   EC2CustomPolicy:
+#     Type: AWS::IAM::Policy
+#     Properties:
+#       PolicyName: EC2CustomPolicy
+#       PolicyDocument:
+#         Version: 2012-10-17
+#         Statement:
+#           - Effect: Allow
+#             Action:
+#               - s3:*
+#               - logs:*
+#               - airflow:*
+#               - ssm:*
+#             Resource: "*"
+#       Roles:
+#         - EC2InstanceRole
+#   AirflowEC2InstanceProfile:
+#     Type: AWS::IAM::InstanceProfile
+#     Properties:
+#       Roles:
+#         - EC2InstanceRole
+#   WriteLBToFileSSMDocument:
+#     Type: AWS::SSM::Document
+#     Properties:
+#       Name: WriteLBToFile
+#       DocumentType: Command
+#       Content:
+#         schemaVersion: "1.2"
+#         description: Install Nginx and display a message.
+#         runtimeConfig:
+#           aws:runShellScript:
+#             properties:
+#               - id: 0.aws:runShellScript
+#                 runCommand:
+#                   - sudo apt-get update -y
+#                   - sudo apt install -y nginx
+#                   - sudo systemctl start nginx
+#                   - sudo systemctl enable nginx
+#                   - echo "Hello from $(hostname -f)" > /var/www/html/index.html
+
+#   SSMInstanceAssociation:
+#     Type: AWS::SSM::Association
+#     DependsOn: MyEC2Instance
+#     Properties:
+#       Name: WriteLBToFileSSMDocument
+#       Targets:
+#         - Key: InstanceIds
+#           Values:
+#             - MyEC2Instance
+#       DocumentVersion: $LATEST
+#   MyEC2Instance:
+#     Type: AWS::EC2::Instance
+#     Properties:
+#       InstanceType: t2.micro
+#       KeyName: ubi-x
+#       ImageId: ami-09b0a86a2c84101e1
+#       IamInstanceProfile: !Ref AirflowEC2InstanceProfile
+#       SubnetId:
+#         Fn::If:
+#           - ShouldCreateNewVPC
+#           - !Ref PublicSubnet
+#           - !Select [0, !Split [",", !Ref PublicSubnetIds]]
+#       SecurityGroupIds:
+#         - !Ref MySecurityGroup
+#       UserData:
+#         Fn::Base64: >
+#           #!/bin/bash
+#           apt update -y
+#           apt install -y docker.io
+#           systemctl start docker
+#           systemctl enable docker
+#           apt install -y nginx
+#           systemctl start nginx
+#           systemctl enable nginx
+#           echo "server { listen 80; location / { proxy_pass http://localhost:8080; } }" > /etc/nginx/conf.d/default.conf
+#           systemctl restart nginx
+
+

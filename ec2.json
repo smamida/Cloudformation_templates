@@ -1,0 +1,91 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Launch an EC2 instance with NGINX installed",
+    "Parameters": {
+      "KeyName": {
+        "Description": "Name of an existing EC2 KeyPair to enable SSH access",
+        "Type": "AWS::EC2::KeyPair::KeyName"
+      },
+      "InstanceType": {
+        "Description": "EC2 instance type",
+        "Type": "String",
+        "Default": "t2.micro",
+        "AllowedValues": [
+          "t2.micro",
+          "t2.small",
+          "t2.medium"
+        ],
+        "ConstraintDescription": "Must be a valid EC2 instance type."
+      },
+      "VpcId": {
+        "Description": "VPC ID where the instance will be launched",
+        "Type": "AWS::EC2::VPC::Id"
+      },
+      "SubnetId": {
+        "Description": "Subnet ID where the instance will be launched",
+        "Type": "AWS::EC2::Subnet::Id"
+      }
+    },
+    "Resources": {
+      "InstanceSecurityGroup": {
+        "Type": "AWS::EC2::SecurityGroup",
+        "Properties": {
+          "GroupDescription": "Enable SSH and HTTP access",
+          "VpcId": { "Ref": "VpcId" },
+          "SecurityGroupIngress": [
+            {
+              "IpProtocol": "tcp",
+              "FromPort": 22,
+              "ToPort": 22,
+              "CidrIp": "0.0.0.0/0" 
+            },
+            {
+              "IpProtocol": "tcp",
+              "FromPort": 80,
+              "ToPort": 80,
+              "CidrIp": "0.0.0.0/0"
+            }
+          ]
+        }
+      },
+      "WebServerInstance": {
+        "Type": "AWS::EC2::Instance",
+        "Properties": {
+          "ImageId": "ami-09b0a86a2c84101e1", 
+          "InstanceType": { "Ref": "InstanceType" },
+          "KeyName": { "Ref": "KeyName" },
+          "SubnetId": { "Ref": "SubnetId" },
+          "SecurityGroupIds": [
+            { "Ref": "InstanceSecurityGroup" }
+          ],
+          "UserData": {
+            "Fn::Base64": {
+              "Fn::Join": [
+                "\n",
+                [
+                  "#!/bin/bash",
+                  "apt-get update -y",
+                  "apt-get install -y nginx",
+                  "systemctl start nginx",
+                  "systemctl enable nginx",
+                  "echo \"Hello from $(hostname -f)\" > /var/www/html/index.html"
+                ]
+              ]
+            }
+          }
+        }
+      }
+    },
+    "Outputs": {
+      "InstanceId": {
+        "Description": "The Instance ID of the newly created EC2 instance.",
+        "Value": { "Ref": "WebServerInstance" }
+      },
+      "PublicIP": {
+        "Description": "Public IP address of the newly created EC2 instance.",
+        "Value": { 
+          "Fn::GetAtt": ["WebServerInstance", "PublicIp"] 
+        }
+      }
+    }
+  }
