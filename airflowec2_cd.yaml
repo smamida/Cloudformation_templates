@@ -1,3 +1,4 @@
+
 AWSTemplateFormatVersion: 2010-09-09
 Description: AWS CloudFormation Template to create an EC2 instance with SSM document
 
@@ -37,7 +38,8 @@ Resources:
       Tags:
         - Key: Name
           Value: NewVPC
-
+        - Key: Environment
+          Value: Development
   PublicSubnet:
     Type: AWS::EC2::Subnet
     Condition: ShouldCreateNewVPC
@@ -48,7 +50,8 @@ Resources:
       Tags:
         - Key: Name
           Value: PublicSubnet
-
+        - Key: Environment
+          Value: Development
   PrivateSubnet:
     Type: AWS::EC2::Subnet
     Condition: ShouldCreateNewVPC
@@ -59,10 +62,18 @@ Resources:
       Tags:
         - Key: Name
           Value: PrivateSubnet
+        - Key: Environment
+          Value: Development
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
     Condition: ShouldCreateNewVPC
+    Properties:
+      Tags:
+        - Key: Name
+          Value: InternetGateway
+        - Key: Environment
+          Value: Development
 
   AttachInternetGateway:
     Type: AWS::EC2::VPCGatewayAttachment
@@ -80,6 +91,11 @@ Resources:
           - ShouldCreateNewVPC
           - !Ref MyVPC
           - !Ref VPCId
+      Tags:
+        - Key: Name
+          Value: RouteTable
+        - Key: Environment
+          Value: Development
 
   PublicRoute:
     Condition: ShouldCreateNewVPC
@@ -127,6 +143,11 @@ Resources:
           FromPort: -1
           ToPort: -1
           CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: MySecurityGroup
+        - Key: Environment
+          Value: Development
 
   EC2InstanceRole:
     Type: AWS::IAM::Role
@@ -194,6 +215,11 @@ Resources:
           systemctl enable nginx
           echo "server { listen 80; location / { proxy_pass http://localhost:8080; } }" > /etc/nginx/conf.d/default.conf
           systemctl restart nginx
+      Tags:
+        - Key: Name
+          Value: airflow_ec2
+        - Key: Environment
+          Value: Development
 
 
 
